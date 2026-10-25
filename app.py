@@ -9,18 +9,21 @@ st.set_page_config(page_title="ربات اسکنر بازار", page_icon="📈"
 st.title("📈 ربات اسکنر چند بازاری")
 st.caption("نسخه ساده | حالت آزمایشی (Dry-Run)")
 
-# تنظیمات
-pairs = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "ADA/USDT", "DOGE/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT"]
+# لیست جفت‌ارزها
+pairs = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", 
+         "ADA/USDT", "DOGE/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT"]
 
-# اتصال به بایننس (بدون نیاز به API Key برای دیدن قیمت)
-exchange = ccxt.binance()
+# اتصال به بایننس
+exchange = ccxt.binance({
+    'enableRateLimit': True
+})
 
 # سایدبار تنظیمات
 st.sidebar.header("تنظیمات")
-threshold = st.sidebar.slider("آستانه انحراف قیمت (%)", 0.3, 3.0, 0.8, 0.1)
-refresh_rate = st.sidebar.slider("هر چند ثانیه یکبار به‌روز شود", 5, 30, 10)
+threshold = st.sidebar.slider("آستانه تغییر ۲۴ساعته (%)", 0.5, 5.0, 1.5, 0.1)
+refresh_rate = st.sidebar.slider("زمان به‌روزرسانی (ثانیه)", 5, 30, 10)
 
-# دکمه شروع
+# وضعیت اجرا
 if "running" not in st.session_state:
     st.session_state.running = False
 
@@ -35,7 +38,6 @@ with col2:
 status = "🟢 در حال اجرا" if st.session_state.running else "🔴 متوقف"
 st.subheader(f"وضعیت: {status}")
 
-# محل نمایش داده‌ها
 price_placeholder = st.empty()
 opportunity_placeholder = st.empty()
 log_placeholder = st.empty()
@@ -45,40 +47,56 @@ def get_prices():
     for pair in pairs:
         try:
             ticker = exchange.fetch_ticker(pair)
+            change = ticker.get('percentage', 0) or 0
             data.append({
-                "جفت‌ارز": pair,
-                "قیمت": ticker['last'],
-                "تغییر ۲۴ساعته (%)": round(ticker['percentage'], 2) if ticker['percentage'] else 0,
-                "حجم": round(ticker['quoteVolume'] / 1000000, 2) if ticker['quoteVolume'] else 0
+                "pair": pair,
+                "price": ticker.get('last', 0),
+                "change_24h": round(change, 2),
+                "volume": round((ticker.get('quoteVolume') or 0) / 1_000_000, 2)
             })
-        except:
+        except Exception as e:
             continue
     return pd.DataFrame(data)
 
-# حلقه اصلی
 if st.session_state.running:
-    while st.session_state.running:
-        df = get_prices()
-        
-        with price_placeholder.container():
-            st.subheader("قیمت‌های زنده")
-            st.dataframe(df, use_container_width=True)
-        
-        # پیدا کردن فرصت ساده (تغییر زیاد)
-        opportunities = df[abs(df["تغییر ۲۴ساعته (%)"]) >= threshold]
-        
-        with opportunity_placeholder.container():
-            st.subheader("فرصت‌های پیدا شده")
+    df = get_prices()
+
+    with price_placeholder.container():
+        st.subheader("قیمت‌های زنده")
+        if not df.empty:
+            # نمایش با نام فارسی
+            display_df = df.rename(columns={
+                "pair": "جفت‌ارز",
+                "price": "قیمت",
+                "change_24h": "تغییر ۲۴ساعته (%)",
+                "volume": "حجم (میلیون)"
+            })
+            st.dataframe(display_df, use_container_width=True)
+        else:
+            st.warning("در حال دریافت اطلاعات از بایننس... لطفاً چند لحظه صبر کنید.")
+
+    with opportunity_placeholder.container():
+        st.subheader("فرصت‌های پیدا شده")
+        if not df.empty:
+            opportunities = df[abs(df["change_24h"]) >= threshold]
             if not opportunities.empty:
-                st.dataframe(opportunities, use_container_width=True)
+                display_opp = opportunities.rename(columns={
+                    "pair": "جفت‌ارز",
+                    "price": "قیمت",
+                    "change_24h": "تغییر ۲۴ساعته (%)",
+                    "volume": "حجم (میلیون)"
+                })
+                st.dataframe(display_opp, use_container_width=True)
                 st.success(f"{len(opportunities)} فرصت پیدا شد")
             else:
                 st.info("فعلاً فرصتی با آستانه تعیین‌شده پیدا نشد")
-        
-        with log_placeholder.container():
-            st.caption(f"آخرین به‌روزرسانی: {datetime.now().strftime('%H:%M:%S')}")
-        
-        time.sleep(refresh_rate)
-        st.rerun()
+        else:
+            st.info("هنوز داده‌ای دریافت نشده")
+
+    with log_placeholder.container():
+        st.caption(f"آخرین به‌روزرسانی: {datetime.now().strftime('%H:%M:%S')}")
+
+    time.sleep(refresh_rate)
+    st.rerun()
 else:
     st.info("برای شروع، دکمه «شروع اسکن» را بزنید.")
